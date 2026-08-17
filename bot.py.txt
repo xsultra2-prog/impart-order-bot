@@ -1,0 +1,852 @@
+import asyncio
+import html
+import json
+import os
+import re
+import logging
+from datetime import datetime, timedelta
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import (
+    InlineKeyboardButton, 
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardRemove
+)
+
+# --- SOZLAMALAR ---
+TOKEN = "8930638956:AAGjeKSiw4cC_k3DqDOsA1RWFZxkh5LKpwk"
+ADMINS = [8436603892, 755856]  # Adminlar ro'yxati
+DEBTS_FILE = "debts.json"
+KASSA_FILE = "kassa.json"
+USERS_FILE = "users.json"
+
+bot = Bot(token=TOKEN)
+dp = Dispatcher()
+
+# --- LUG'ATLAR (3 TA TIL) ---
+LANG_DATA = {
+    "uz_lat": {
+        "welcome": "Salom hurmatli {name}, IMPART ORDER BOT ga xush kelibsiz!\n\nQuyidagi tugmalardan birini tanlang:",
+        "btn_order": "🛒 Buyurtma berish",
+        "btn_continue": "🛒 Buyurtmani davom ettirish",
+        "btn_debt": "📜 Mening qarzim",
+        "btn_debtors": "📊 Qarzdorlar ro'yxati",
+        "btn_kassa": "💰 Kassa / Statistika",
+        "ask_order_text": "📝 Sizga kerak boʻlgan tavar(lar) roʻyxatini yozing:",
+        "ask_name": "👤 Qabul qiluvchining ismini kiriting:",
+        "ask_phone": "📞 Qabul qiluvchining telefon raqamini kiriting:\n<i>Masalan: +998901234567</i>",
+        "ask_address": "📍 Sizga eng yaqin boʻlgan bts filialini tanlang yoki yangi kiriting:",
+        "btn_new_addr": "➕ Yangi manzil qo'shish",
+        "ask_new_addr_text": "📍 Yangi manzilni matn ko'rinishida yozib yuboring:",
+        "payment_type": "To'lov turini tanlang:",
+        "pay_cash": "💵 Naqd / Karta",
+        "pay_debt": "📝 Nasiya",
+        "cash_instruct": "💳 Toʻlov uchun koʻrsatma❗\n\nKeyingi bosqichga oʻtish uchun toʻlov chekini joʻnating!",
+        "debt_period": "Nasiyani to'lash muddatini tanlang:",
+        "debt_amount": "💳 Nasiya uchun koʻrsatma keyingi bosqichga oʻtish uchun kelishilgan summani yozing❗",
+        "order_sent": "Buyurtmangiz adminga yuborildi, admin tasdiqlashini kuting.",
+        "order_sent_retry": "{reason} xato to'g'irlandi. Buyurtmangiz adminga yuborildi, admin tasdiqlashini kuting.",
+        "btn_main_menu": "🏠 Bosh menyu",
+        "btn_not_needed": "❌ Kerak emas",
+        "thanks": "Buyurtmangiz uchun rahmat!",
+        "overdue": "⚠️ Iltimos {name}, buyurtma berish uchun qarzingizni uzing! So'ng qayta buyurtma berishni bosing."
+    },
+    "uz_cyr": {
+        "welcome": "Салом ҳурматли {name}, IMPART ORDER BOT га хуш келибсиз!\n\nҚуйидаги тугмалардан бирини танланг:",
+        "btn_order": "🛒 Буюртма бериш",
+        "btn_continue": "🛒 Буюртмани давом эттириш",
+        "btn_debt": "📜 Менинг қарзим",
+        "btn_debtors": "📊 Қарздорлар рўйхати",
+        "btn_kassa": "💰 Касса / Статистика",
+        "ask_order_text": "📝 Сизга керак бўлган тавар(лар) рўйхатини ёзинг:",
+        "ask_name": "👤 Қабул қилувчининг исмини киритинг:",
+        "ask_phone": "📞 Қабул қилувчининг телефон рақамини киритинг:\n<i>Масалан: +998901234567</i>",
+        "ask_address": "📍 Сизга энг яқин бўлган bts филиалини танланг ёки янги киритинг:",
+        "btn_new_addr": "➕ Янги манзил қўшиш",
+        "ask_new_addr_text": "📍 Янги манзилни матн кўринишида ёзиб юборинг:",
+        "payment_type": "Тўлов турини танланг:",
+        "pay_cash": "💵 Нақд / Карта",
+        "pay_debt": "📝 Насия",
+        "cash_instruct": "💳 Тўлов учун кўрсатма❗\n\nКейинги босқичга ўтиш учун тўлов чекини жўнатинг!",
+        "debt_period": "Насияни тўлаш муддатини танланг:",
+        "debt_amount": "💳 Насия учун кўрсатма кейинги босқичга ўтиш учун келишилган суммани ёзинг❗",
+        "order_sent": "Буюртмангиз админга юборилди, админ тасдиқлашини кутинг.",
+        "order_sent_retry": "{reason} хато тўғриланди. Буюртмангиз админга юборилди, админ тасдиқлашини кутинг.",
+        "btn_main_menu": "🏠 Бош меню",
+        "btn_not_needed": "❌ Керак эмас",
+        "thanks": "Буюртмангиз учун раҳмат!",
+        "overdue": "⚠️ Илтимос {name}, буюртма бериш учун қарзингизни узинг! Сўнг қайта буюртма беришни босинг."
+    },
+    "ru": {
+        "welcome": "Приветствую, уважаемый {name}, добро пожаловать в IMPART ORDER BOT!\n\nВыберите одну из кнопок ниже:",
+        "btn_order": "🛒 Сделать заказ",
+        "btn_continue": "🛒 Продолжить заказ",
+        "btn_debt": "📜 Мой долг",
+        "btn_debtors": "📊 Список должников",
+        "btn_kassa": "💰 Касса / Статистика",
+        "ask_order_text": "📝 Напишите список необходимого товара(ов):",
+        "ask_name": "👤 Введите имя получателя:",
+        "ask_phone": "📞 Введите номер телефона получателя:\n<i>Например: +998901234567</i>",
+        "ask_address": "📍 Выберите ближайший филиал bts или введите новый:",
+        "btn_new_addr": "➕ Добавить новый адрес",
+        "ask_new_addr_text": "📍 Напишите новый адрес в виде текста:",
+        "payment_type": "Выберите способ оплаты:",
+        "pay_cash": "💵 Наличные / Карта",
+        "pay_debt": "📝 В рассрочку (Насия)",
+        "cash_instruct": "💳 Инструкция по оплате❗\n\nДля перехода к следующему этапу отправьте чек об оплате!",
+        "debt_period": "Выберите срок погашения рассрочки:",
+        "debt_amount": "💳 Инструкция по рассрочке: для перехода к следующему этапу напишите согласованную сумму❗",
+        "order_sent": "Ваш заказ отправлен админу, дожидайтесь подтверждения админа.",
+        "order_sent_retry": "{reason} исправлена. Ваш заказ отправлен админу, дожидайтесь подтверждения админа.",
+        "btn_main_menu": "🏠 Главное меню",
+        "btn_not_needed": "❌ Не нужно",
+        "thanks": "Спасибо за ваш заказ!",
+        "overdue": "⚠️ Пожалуйста, {name}, погасите долг, чтобы сделать заказ! Затем нажмите кнопку заново."
+    }
+}
+
+def get_text(user_id: int, key: str, **kwargs):
+    users_data = load_json(USERS_FILE)
+    lang = users_data.get(str(user_id), {}).get("lang", "uz_lat")
+    text_template = LANG_DATA.get(lang, LANG_DATA["uz_lat"]).get(key, LANG_DATA["uz_lat"].get(key, ""))
+    return text_template.format(**kwargs)
+
+# --- JSON FAYLLAR BILAN ISHLASH ---
+def load_json(file_path):
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            if file_path == USERS_FILE:
+                return {}
+            if file_path == DEBTS_FILE:
+                return []
+            return {"total_orders": 0, "cash_orders": 0, "debt_orders": 0, "total_sum": 0, "debts_list": []}
+            
+    if file_path == USERS_FILE:
+        return {}
+    if file_path == DEBTS_FILE:
+        return []
+    return {"total_orders": 0, "cash_orders": 0, "debt_orders": 0, "total_sum": 0, "debts_list": []}
+
+def save_json(file_path, data):
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+def extract_number(text):
+    numbers = re.findall(r"\d+", text.replace(" ", "").replace(",", "."))
+    if numbers:
+        try:
+            return float("".join(numbers)) if "." in "".join(numbers) else int("".join(numbers))
+        except:
+            return 0
+    return 0
+
+# --- AVTOMATIK OGOHLANTIRISH TIZIMI ---
+async def auto_debt_reminder_task():
+    while True:
+        try:
+            debts = load_json(DEBTS_FILE)
+            today_str = datetime.now().strftime("%Y-%m-%d")
+
+            for d in debts:
+                user_id = d.get("user_id")
+                due_date = d.get("date", "")
+                product = html.escape(str(d.get("product", "Mahsulot")))
+                full_name = html.escape(str(d.get("full_name", "Mijoz")))
+
+                if due_date and due_date <= today_str:
+                    remind_text = (
+                        f"⏰ <b>QARZni TO'LASH MUDDATI KELDI!</b>\n\n"
+                        f"Hurmatli <b>{full_name}</b>, sizning <b>{product}</b> mahsulotingiz bo'yicha qarzingizni qaytarish muddati ({due_date}) keldi.\n\n"
+                        f"⚠️ <i>Iltimos, qarzingizni uzing. Aks holda botdan qayta buyurtma bera olmaysiz!</i>"
+                    )
+                    try:
+                        await bot.send_message(user_id, remind_text, parse_mode="HTML")
+                        for admin_id in ADMINS:
+                            await bot.send_message(
+                                admin_id, 
+                                f"🔔 <b>Avto-Eslatma yuborildi:</b>\n👤 {full_name} (ID: <code>{user_id}</code>)\n📦 {product}\n📅 Muddat: {due_date}",
+                                parse_mode="HTML"
+                            )
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        await asyncio.sleep(86400)
+
+# --- HOLATLAR (FSM) ---
+class OrderState(StatesGroup):
+    waiting_for_order_text = State() 
+    waiting_for_receiver_name = State()
+    waiting_for_receiver_phone = State()
+    waiting_for_address_choice = State() 
+    waiting_for_bts_branch_text = State() 
+    waiting_for_payment_type = State()
+    waiting_for_cash_payment = State()      
+    waiting_for_receipt_retry = State()     
+    waiting_for_debt_period = State()
+    waiting_for_debt_amount = State()
+
+# --- KLAVIATURALAR ---
+def get_main_menu_kb(user_id: int):
+    users_data = load_json(USERS_FILE)
+    lang = users_data.get(str(user_id), {}).get("lang", "uz_lat")
+    
+    t_order = LANG_DATA[lang]["btn_order"]
+    t_debt = LANG_DATA[lang]["btn_debt"]
+    t_debtors = LANG_DATA[lang]["btn_debtors"]
+    t_kassa = LANG_DATA[lang]["btn_kassa"]
+
+    keyboard = [
+        [KeyboardButton(text=t_order)],
+        [KeyboardButton(text=t_debt)]
+    ]
+    if user_id in ADMINS:
+        keyboard.append([KeyboardButton(text=t_debtors)])
+        keyboard.append([KeyboardButton(text=t_kassa)])
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+def get_user_addresses_kb(user_addresses: list, user_id: int):
+    users_data = load_json(USERS_FILE)
+    lang = users_data.get(str(user_id), {}).get("lang", "uz_lat")
+    t_new_addr = LANG_DATA[lang]["btn_new_addr"]
+
+    buttons = []
+    for addr in user_addresses:
+        buttons.append([InlineKeyboardButton(text=addr, callback_data=f"select_addr_{addr}")])
+    buttons.append([InlineKeyboardButton(text=t_new_addr, callback_data="select_addr_new")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_payment_kb(user_id: int):
+    users_data = load_json(USERS_FILE)
+    lang = users_data.get(str(user_id), {}).get("lang", "uz_lat")
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=LANG_DATA[lang]["pay_cash"], callback_data="pay_cash")],
+            [InlineKeyboardButton(text=LANG_DATA[lang]["pay_debt"], callback_data="pay_debt")]
+        ]
+    )
+
+debt_periods_reply_kb = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="1 kun"), KeyboardButton(text="2 kun"), KeyboardButton(text="3 kun")],
+        [KeyboardButton(text="4 kun"), KeyboardButton(text="5 kun")]
+    ],
+    resize_keyboard=True
+)
+
+def get_admin_action_kb(user_id: int, pay_type: str):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Qabul qilish", callback_data=f"accept_{pay_type}_{user_id}"),
+                InlineKeyboardButton(text="❌ Rad etish", callback_data=f"reject_{pay_type}_{user_id}")
+            ]
+        ]
+    )
+
+def get_reject_reasons_kb(user_id: int, pay_type: str):
+    buttons = [
+        [InlineKeyboardButton(text="📦 Mahsulot qolmagan", callback_data=f"rj_out_{user_id}")],
+        [InlineKeyboardButton(text="❌ Mavjud emas", callback_data=f"rj_notexist_{user_id}")],
+        [InlineKeyboardButton(text="📞 Nomer xato", callback_data=f"rj_wrongphone_{user_id}")],
+        [InlineKeyboardButton(text="👤 Ism xato", callback_data=f"rj_wrongusername_{user_id}")],
+        [InlineKeyboardButton(text="📦 Manzil xato", callback_data=f"rj_wrongaddress_{user_id}")],
+        [InlineKeyboardButton(text="✍️ Tovar ro'yxati noto'g'ri", callback_data=f"rj_wrongname_{user_id}")]
+    ]
+    if pay_type == "cash":
+        buttons.append([InlineKeyboardButton(text="🧾 Chek noto'g'ri", callback_data=f"rj_wrongcheck_{user_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_admin_debts_kb(active_debts):
+    buttons = []
+    for d in active_debts:
+        d_id = d.get("id", d.get("user_id", 0))
+        u_id = d.get("user_id", 0)
+        full_name = html.escape(str(d.get('full_name', 'Mijoz')))
+        buttons.append([
+            InlineKeyboardButton(text=f"✅ To'landi: {full_name}", callback_data=f"payoff_{d_id}"),
+            InlineKeyboardButton(text=f"🔔 Eslatish", callback_data=f"remind_{u_id}_{d_id}")
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+kassa_kb = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="🧹 Kassani tozalash", callback_data="clear_kassa")]
+    ]
+)
+
+# --- TIL TANLASH VA START ---
+@dp.message(CommandStart())
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
+    lang_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🇺🇿 O'zbekcha (lotin)", callback_data="set_lang_uz_lat")],
+            [InlineKeyboardButton(text="🇺🇿 Узбекча (Кириллча)", callback_data="set_lang_uz_cyr")],
+            [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="set_lang_ru")]
+        ]
+    )
+    await message.answer("Tilni tanlang / Выберите язык:", reply_markup=lang_kb)
+
+@dp.callback_query(F.data.startswith("set_lang_"))
+async def process_language_choice(call: types.CallbackQuery, state: FSMContext):
+    await call.answer()
+    lang = call.data.replace("set_lang_", "")
+    user_id = call.from_user.id
+    
+    users_data = load_json(USERS_FILE)
+    str_uid = str(user_id)
+    if str_uid not in users_data:
+        users_data[str_uid] = {}
+    users_data[str_uid]["lang"] = lang
+    save_json(USERS_FILE, users_data)
+    
+    username = call.from_user.username
+    nickname_display = f"@{username}" if username else html.escape(call.from_user.full_name)
+    
+    welcome_msg = get_text(user_id, "welcome", name=nickname_display)
+    await call.message.edit_text(welcome_msg, parse_mode="HTML")
+    await call.message.answer("Quyidagi menyudan foydalaning:", reply_markup=get_main_menu_kb(user_id))
+
+@dp.message(F.text.in_({"/menu", "/bosh_menyu"}))
+async def cmd_menu(message: types.Message, state: FSMContext):
+    await state.clear()
+    user_id = message.from_user.id
+    await message.answer(
+        "🏠 <b>Bosh menyu:</b>",
+        reply_markup=get_main_menu_kb(user_id),
+        parse_mode="HTML"
+    )
+
+# --- BUYURTMA BOSHLASH ---
+@dp.message(F.text.in_({"🛒 Buyurtma berish", "🛒 Буюртма бериш", "🛒 Сделать заказ", "🛒 Buyurtmani davom ettirish", "🛒 Буюртмани давом эттириш", "🛒 Продолжить заказ"}))
+async def start_order(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    str_user_id = str(user_id)
+    debts = load_json(DEBTS_FILE)
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    overdue_debt = None
+    for d in debts:
+        if d.get("user_id") == user_id:
+            due_date = d.get("date", "")
+            if due_date and due_date < today_str:
+                overdue_debt = d
+                break
+
+    if overdue_debt:
+        username = message.from_user.username
+        nickname_display = f"@{username}" if username else html.escape(message.from_user.full_name)
+        warn_msg = get_text(user_id, "overdue", name=nickname_display)
+        await message.answer(warn_msg, parse_mode="HTML")
+        return
+
+    users_data = load_json(USERS_FILE)
+    if str_user_id in users_data:
+        u_info = users_data[str_user_id]
+        if u_info.get("receiver_name") and u_info.get("phone"):
+            await state.update_data(
+                receiver_name=u_info.get("receiver_name"),
+                phone=u_info.get("phone")
+            )
+            await state.set_state(OrderState.waiting_for_order_text)
+            await message.answer(
+                get_text(user_id, "ask_order_text"),
+                reply_markup=ReplyKeyboardRemove(),
+                parse_mode="HTML"
+            )
+            return
+
+    await state.set_state(OrderState.waiting_for_receiver_name)
+    await message.answer(
+        get_text(user_id, "ask_name"),
+        reply_markup=ReplyKeyboardRemove(),
+        parse_mode="HTML"
+    )
+
+@dp.message(OrderState.waiting_for_receiver_name, F.text)
+async def process_receiver_name(message: types.Message, state: FSMContext):
+    name = message.text.strip()
+    if not name or name.isdigit():
+        await message.answer("⚠️ Ism noto'g'ri! Qayta kiriting:", parse_mode="HTML")
+        return
+    
+    username = message.from_user.username
+    full_display_name = f"{name} (@{username})" if username else f"{name}"
+    await state.update_data(receiver_name=full_display_name)
+    
+    await state.set_state(OrderState.waiting_for_receiver_phone)
+    await message.answer(get_text(message.from_user.id, "ask_phone"), parse_mode="HTML")
+
+@dp.message(OrderState.waiting_for_receiver_phone, F.text)
+async def process_receiver_phone(message: types.Message, state: FSMContext):
+    phone = message.text.strip()
+    clean_phone = re.sub(r"[^\d]", "", phone)
+    
+    if clean_phone.startswith("998"):
+        if len(clean_phone) != 12:
+            await message.answer("⚠️ Telefon raqami noto'g'ri! Qayta kiriting:", parse_mode="HTML")
+            return
+    else:
+        if len(clean_phone) != 9:
+            await message.answer("⚠️ Telefon raqami noto'g'ri! Qayta kiriting:", parse_mode="HTML")
+            return
+        phone = "+998" + clean_phone
+
+    await state.update_data(phone=phone)
+    
+    users_data = load_json(USERS_FILE)
+    user_id_str = str(message.from_user.id)
+    if user_id_str not in users_data:
+        users_data[user_id_str] = {}
+    users_data[user_id_str]["receiver_name"] = (await state.get_data()).get("receiver_name")
+    users_data[user_id_str]["phone"] = phone
+    save_json(USERS_FILE, users_data)
+
+    await state.set_state(OrderState.waiting_for_order_text)
+    await message.answer(get_text(message.from_user.id, "ask_order_text"), parse_mode="HTML")
+
+@dp.message(OrderState.waiting_for_order_text, F.text)
+async def process_order_text(message: types.Message, state: FSMContext):
+    await state.update_data(order_text=message.text.strip())
+    
+    data = await state.get_data()
+    if data.get("bts_location") and data.get("is_fixing"):
+        await ask_payment_type_directly(message, state)
+    else:
+        await ask_address_step(message, state)
+
+async def ask_address_step(message_or_call, state: FSMContext):
+    user_id = message_or_call.from_user.id
+    users_data = load_json(USERS_FILE)
+    user_addresses = users_data.get(str(user_id), {}).get("addresses", [])
+
+    await state.set_state(OrderState.waiting_for_address_choice)
+    text = get_text(user_id, "ask_address")
+    markup = get_user_addresses_kb(user_addresses, user_id)
+
+    if isinstance(message_or_call, types.CallbackQuery):
+        await message_or_call.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+    else:
+        await message_or_call.answer(text, reply_markup=markup, parse_mode="HTML")
+
+@dp.callback_query(OrderState.waiting_for_address_choice, F.data.startswith("select_addr_"))
+async def process_address_choice(call: types.CallbackQuery, state: FSMContext):
+    await call.answer()
+    action = call.data.replace("select_addr_", "")
+    user_id = call.from_user.id
+
+    if action == "new":
+        await state.set_state(OrderState.waiting_for_bts_branch_text)
+        await call.message.edit_text(get_text(user_id, "ask_new_addr_text"), parse_mode="HTML")
+    else:
+        decoded_addr = html.escape(action)
+        full_bts_text = f"📍 <b>Manzil:</b> {decoded_addr}"
+        await state.update_data(bts_location=full_bts_text)
+        await call.message.delete()
+        
+        data = await state.get_data()
+        if data.get("is_fixing") and data.get("payment_method") == "debt" and data.get("debt_days") and data.get("debt_amount_value"):
+            await finalize_debt_order_directly(call.message, state)
+        else:
+            await ask_payment_type_directly_from_call(call, state)
+
+@dp.message(OrderState.waiting_for_bts_branch_text, F.text)
+async def process_bts_branch_text(message: types.Message, state: FSMContext):
+    raw_branch_text = message.text.strip()
+    branch_text = html.escape(raw_branch_text)
+    full_bts_text = f"📍 <b>Manzil:</b> {branch_text}"
+    
+    user_id_str = str(message.from_user.id)
+    users_data = load_json(USERS_FILE)
+    if user_id_str not in users_data:
+        users_data[user_id_str] = {}
+    if "addresses" not in users_data[user_id_str]:
+        users_data[user_id_str]["addresses"] = []
+    
+    if raw_branch_text not in users_data[user_id_str]["addresses"]:
+        users_data[user_id_str]["addresses"].append(raw_branch_text)
+        save_json(USERS_FILE, users_data)
+
+    await state.update_data(bts_location=full_bts_text)
+    
+    data = await state.get_data()
+    if data.get("is_fixing") and data.get("payment_method") == "debt" and data.get("debt_days") and data.get("debt_amount_value"):
+        await finalize_debt_order_directly(message, state)
+    else:
+        await ask_payment_type_directly(message, state)
+
+async def ask_payment_type_directly(message: types.Message, state: FSMContext):
+    await state.set_state(OrderState.waiting_for_payment_type)
+    data = await state.get_data()
+    user_id = message.from_user.id
+
+    r_name = html.escape(str(data.get('receiver_name', '')))
+    p_phone = html.escape(str(data.get('phone', '')))
+    o_text = html.escape(str(data.get('order_text', '')))
+    full_bts_text = data.get('bts_location', '')
+
+    response_text = (
+        f"👤 <b>Qabul qiluvchi:</b> {r_name}\n"
+        f"📞 <b>Tel:</b> {p_phone}\n"
+        f"🛒 <b>Mahsulot:</b> {o_text}\n"
+        f"🏬 {full_bts_text}\n\n"
+        f"{get_text(user_id, 'payment_type')}"
+    )
+    await message.answer(response_text, reply_markup=get_payment_kb(user_id), parse_mode="HTML", disable_web_page_preview=True)
+
+async def ask_payment_type_directly_from_call(call: types.CallbackQuery, state: FSMContext):
+    await state.set_state(OrderState.waiting_for_payment_type)
+    data = await state.get_data()
+    user_id = call.from_user.id
+
+    r_name = html.escape(str(data.get('receiver_name', '')))
+    p_phone = html.escape(str(data.get('phone', '')))
+    o_text = html.escape(str(data.get('order_text', '')))
+    full_bts_text = data.get('bts_location', '')
+
+    response_text = (
+        f"👤 <b>Qabul qiluvchi:</b> {r_name}\n"
+        f"📞 <b>Tel:</b> {p_phone}\n"
+        f"🛒 <b>Mahsulot:</b> {o_text}\n"
+        f"🏬 {full_bts_text}\n\n"
+        f"{get_text(user_id, 'payment_type')}"
+    )
+    await call.message.answer(response_text, reply_markup=get_payment_kb(user_id), parse_mode="HTML", disable_web_page_preview=True)
+
+# --- TO'LOV NAQD ---
+@dp.callback_query(OrderState.waiting_for_payment_type, F.data == "pay_cash")
+async def process_cash(call: types.CallbackQuery, state: FSMContext):
+    await call.answer()
+    await state.update_data(payment_method="cash")
+    await state.set_state(OrderState.waiting_for_cash_payment)
+    await state.update_data(receipt_photo_id=None)
+    await call.message.edit_text(get_text(call.from_user.id, "cash_instruct"), parse_mode="HTML")
+
+@dp.message(OrderState.waiting_for_cash_payment, F.photo)
+async def process_cash_photo_input(message: types.Message, state: FSMContext):
+    photo_id = message.photo[-1].file_id
+    await state.update_data(receipt_photo_id=photo_id, cash_amount_text="Kelishilgan", cash_amount_value=1)
+    await finalize_cash_order(message, state)
+
+@dp.message(OrderState.waiting_for_cash_payment)
+async def process_cash_invalid_input(message: types.Message):
+    await message.answer("⚠️ Iltimos, to'lov chekining rasmini yuboring!", parse_mode="HTML")
+
+@dp.message(OrderState.waiting_for_receipt_retry, F.photo)
+async def process_receipt_retry_photo(message: types.Message, state: FSMContext):
+    photo_id = message.photo[-1].file_id
+    await state.update_data(receipt_photo_id=photo_id, cash_amount_text="Kelishilgan", cash_amount_value=1)
+    await finalize_cash_order(message, state)
+
+@dp.message(OrderState.waiting_for_receipt_retry)
+async def process_receipt_retry_invalid(message: types.Message):
+    await message.answer("⚠️ Iltimos, faqat chek rasmini yuboring!", parse_mode="HTML")
+
+async def finalize_cash_order(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    user = message.from_user
+    user_id = user.id
+    
+    r_name = html.escape(str(data.get('receiver_name', '')))
+    p_phone = html.escape(str(data.get('phone', '')))
+    bts_loc = data.get('bts_location', '')
+    o_text = html.escape(str(data.get('order_text', '')))
+    c_amount = html.escape(str(data.get('cash_amount_text', 'Kelishilgan')))
+
+    caption_text = (
+        f"🛒 <b>YANGI BUYURTMA (Naqd/Karta)</b>\n\n"
+        f"👤 {r_name}\n📞 {p_phone}\n🆔 <code>{user.id}</code>\n"
+        f"🏬 {bts_loc}\n📝 {o_text}\n💰 Summa: {c_amount}"
+    )
+    
+    users_data = load_json(USERS_FILE)
+    lang = users_data.get(str(user_id), {}).get("lang", "uz_lat")
+    after_order_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=LANG_DATA[lang]["btn_main_menu"], callback_data="after_main_menu")],
+            [InlineKeyboardButton(text=LANG_DATA[lang]["btn_not_needed"], callback_data="after_not_needed")]
+        ]
+    )
+    
+    try:
+        for admin_id in ADMINS:
+            await bot.send_photo(chat_id=admin_id, photo=data.get('receipt_photo_id'), caption=f"🧾 <b>YANGI CHEK</b>\n\n{caption_text}", reply_markup=get_admin_action_kb(user.id, "cash"), parse_mode="HTML")
+        
+        retry_reason = data.get('retry_reason_text')
+        if retry_reason:
+            msg_text = get_text(user_id, "order_sent_retry", reason=retry_reason)
+        else:
+            msg_text = get_text(user_id, "order_sent")
+            
+        await message.answer(msg_text, reply_markup=after_order_kb, parse_mode="HTML")
+    except Exception:
+        await message.answer("⚠️ Xatolik yuz berdi.", reply_markup=get_main_menu_kb(user_id))
+    
+    await state.clear()
+
+# --- TO'LOV NASIYA ---
+@dp.callback_query(OrderState.waiting_for_payment_type, F.data == "pay_debt")
+async def process_debt_start(call: types.CallbackQuery, state: FSMContext):
+    await call.answer()
+    await state.update_data(payment_method="debt")
+    
+    data = await state.get_data()
+    if data.get("is_fixing") and data.get("debt_days") and data.get("debt_amount_value"):
+        await call.message.delete()
+        await finalize_debt_order_directly(call.message, state)
+        return
+
+    await state.set_state(OrderState.waiting_for_debt_period)
+    await call.message.delete()
+    await call.message.answer(get_text(call.from_user.id, "debt_period"), reply_markup=debt_periods_reply_kb)
+
+@dp.message(OrderState.waiting_for_debt_period, F.text.in_({"1 kun", "2 kun", "3 kun", "4 kun", "5 kun"}))
+async def process_debt_period_message(message: types.Message, state: FSMContext):
+    days_number = message.text.split()[0]
+    await state.update_data(debt_days=days_number)
+    
+    data = await state.get_data()
+    if data.get("is_fixing") and data.get("debt_amount_value"):
+        await finalize_debt_order_directly(message, state)
+    else:
+        await state.set_state(OrderState.waiting_for_debt_amount)
+        await message.answer(get_text(message.from_user.id, "debt_amount"), reply_markup=ReplyKeyboardRemove(), parse_mode="HTML")
+
+@dp.message(OrderState.waiting_for_debt_amount, F.text)
+async def process_debt_amount_finish(message: types.Message, state: FSMContext):
+    amount_text = message.text.strip()
+    numeric_value = extract_number(amount_text)
+    
+    if numeric_value <= 0:
+        await message.answer("⚠️ Iltimos, son bilan yozing!", parse_mode="HTML")
+        return
+
+    await state.update_data(debt_amount_text=amount_text, debt_amount_value=numeric_value)
+    await finalize_debt_order_directly(message, state)
+
+async def finalize_debt_order_directly(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    user = message.from_user
+    user_id = user.id
+    days = int(data.get('debt_days', 1))
+    amount_text = str(data.get('debt_amount_text', '66'))
+    numeric_value = float(data.get('debt_amount_value', 66))
+    
+    now = datetime.now()
+    due_date_str = (now + timedelta(days=days)).strftime("%Y-%m-%d")
+
+    o_text = str(data.get('order_text', ''))
+    debts = load_json(DEBTS_FILE)
+    debt_id = int(now.timestamp() * 1000)
+    debt_entry = {
+        "id": debt_id,
+        "user_id": user.id,
+        "full_name": data.get('receiver_name', user.full_name),
+        "phone": f"Qabul qiluvchi: {data.get('phone')}",
+        "product": f"{o_text} (Summasi: {amount_text})",
+        "amount_value": numeric_value,
+        "date": due_date_str
+    }
+    debts.append(debt_entry)
+    save_json(DEBTS_FILE, debts)
+
+    r_name = html.escape(str(data.get('receiver_name', '')))
+    p_phone = html.escape(str(data.get('phone', '')))
+    bts_loc = html.escape(str(data.get('bts_location', '')))
+
+    admin_text = (
+        f"🛒 <b>YANGI BUYURTMA (Qarzga)</b>\n\n"
+        f"👤 {r_name}\n📞 {p_phone}\n🆔 <code>{user.id}</code>\n"
+        f"🏬 {bts_loc}\n📝 {o_text}\n💰 Summa: {amount_text}\n⏰ Muddat: {days} kun (Sana: {due_date_str})"
+    )
+    for admin_id in ADMINS:
+        await bot.send_message(chat_id=admin_id, text=admin_text, reply_markup=get_admin_action_kb(user.id, "debt"), parse_mode="HTML")
+
+    users_data = load_json(USERS_FILE)
+    lang = users_data.get(str(user_id), {}).get("lang", "uz_lat")
+    after_order_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=LANG_DATA[lang]["btn_main_menu"], callback_data="after_main_menu")],
+            [InlineKeyboardButton(text=LANG_DATA[lang]["btn_not_needed"], callback_data="after_not_needed")]
+        ]
+    )
+
+    retry_reason = data.get('retry_reason_text')
+    if retry_reason:
+        msg_text = get_text(user_id, "order_sent_retry", reason=retry_reason)
+    else:
+        msg_text = get_text(user_id, "order_sent")
+
+    await message.answer(msg_text, reply_markup=after_order_kb, parse_mode="HTML")
+    await state.clear()
+
+# --- BUYURTMA YAKUNIDAGI TUGMALAR (Bosh menyu / Kerak emas) ---
+@dp.callback_query(F.data == "after_main_menu")
+async def after_main_menu_cb(call: types.CallbackQuery, state: FSMContext):
+    await call.answer()
+    user_id = call.from_user.id
+    await call.message.edit_text("🏠 <b>Bosh menyu:</b>", parse_mode="HTML")
+    await call.message.answer("Quyidagi menyudan foydalaning:", reply_markup=get_main_menu_kb(user_id))
+
+@dp.callback_query(F.data == "after_not_needed")
+async def after_not_needed_cb(call: types.CallbackQuery, state: FSMContext):
+    await call.answer()
+    user_id = call.from_user.id
+    thanks_text = get_text(user_id, "thanks")
+    await call.message.edit_text(thanks_text, parse_mode="HTML")
+
+# --- ADMIN TIZIMI ---
+@dp.callback_query(F.data.startswith("accept_"))
+async def admin_accept(call: types.CallbackQuery):
+    await call.answer()
+    parts = call.data.split("_")
+    pay_type, user_id = parts[1], int(parts[2])
+
+    kassa = load_json(KASSA_FILE)
+    kassa["total_orders"] = kassa.get("total_orders", 0) + 1
+    if pay_type == "cash":
+        kassa["cash_orders"] = kassa.get("cash_orders", 0) + 1
+    else:
+        kassa["debt_orders"] = kassa.get("debt_orders", 0) + 1
+    save_json(KASSA_FILE, kassa)
+
+    try:
+        await bot.send_message(user_id, "🎉 <b>Buyurtmangiz tasdiqlandi va qabul qilindi!</b>", parse_mode="HTML")
+    except Exception:
+        pass
+    
+    if call.message.photo:
+        await call.message.edit_caption(caption=(call.message.caption or "") + "\n\n✅ <b>QABUL QILINDI</b>", parse_mode="HTML")
+    else:
+        await call.message.edit_text(text=(call.message.text or "") + "\n\n✅ <b>QABUL QILINDI</b>", parse_mode="HTML")
+
+@dp.callback_query(F.data.startswith("reject_"))
+async def admin_reject(call: types.CallbackQuery):
+    await call.answer()
+    parts = call.data.split("_")
+    pay_type, user_id = parts[1], int(parts[2])
+    
+    if call.message.photo:
+        await call.message.edit_caption(caption=(call.message.caption or "") + "\n\n❓ <b>Rad etish sababini tanlang:</b>", reply_markup=get_reject_reasons_kb(user_id, pay_type), parse_mode="HTML")
+    else:
+        await call.message.edit_text(text=(call.message.text or "") + "\n\n❓ <b>Rad etish sababini tanlang:</b>", reply_markup=get_reject_reasons_kb(user_id, pay_type), parse_mode="HTML")
+
+@dp.callback_query(F.data.startswith("rj_"))
+async def process_rejection_reason(call: types.CallbackQuery, state: FSMContext):
+    await call.answer()
+    parts = call.data.split("_")
+    reason_code, user_id = parts[1], int(parts[2])
+
+    reasons = {
+        "out": "Mahsulot omborda qolmagan",
+        "notexist": "Mahsulot mavjud emas",
+        "wrongphone": "Telefon raqami",
+        "wrongusername": "Ism",
+        "wrongaddress": "Manzil",
+        "wrongname": "Tovar ro'yxati",
+        "wrongcheck": "Chek"
+    }
+    selected_reason = reasons.get(reason_code, "Xato")
+
+    debts = load_json(DEBTS_FILE)
+    debts = [d for d in debts if d.get("user_id") != user_id]
+    save_json(DEBTS_FILE, debts)
+
+    try:
+        await bot.send_message(user_id, f"❌ <b>Buyurtmangiz rad etildi!</b>\n\n<b>Sababi:</b> {selected_reason} xato.", parse_mode="HTML")
+    except Exception:
+        pass
+
+    if call.message.photo:
+        await call.message.edit_caption(caption=(call.message.caption or "") + f"\n\n❌ <b>RAD ETILDI:</b> {selected_reason}", parse_mode="HTML")
+    else:
+        await call.message.edit_text(text=(call.message.text or "") + f"\n\n❌ <b>RAD ETILDI:</b> {selected_reason}", parse_mode="HTML")
+
+@dp.message(F.text.in_({"💰 Kassa / Statistika", "💰 Касса / Статистика"}))
+async def show_kassa(message: types.Message):
+    if message.from_user.id not in ADMINS:
+        return
+    kassa = load_json(KASSA_FILE)
+    debts = load_json(DEBTS_FILE)
+    total_debt_sum = sum(d.get("amount_value", 0) for d in debts)
+    
+    text = (
+        "💰 <b>KASSA VA STATISTIKA</b>\n\n"
+        f"📦 Jami buyurtmalar: {kassa.get('total_orders', 0)} ta\n"
+        f"💵 Naqd/Karta: {kassa.get('cash_orders', 0)} ta\n"
+        f"📝 Nasiya: {kassa.get('debt_orders', 0)} ta\n"
+        f"📉 Umumiy qarz summasi: {total_debt_sum}"
+    )
+    await message.answer(text, reply_markup=kassa_kb, parse_mode="HTML")
+
+@dp.callback_query(F.data == "clear_kassa")
+async def clear_kassa(call: types.CallbackQuery):
+    save_json(KASSA_FILE, {"total_orders": 0, "cash_orders": 0, "debt_orders": 0})
+    await call.answer("🧹 Kassa tozalandi!", show_alert=True)
+    await call.message.edit_text("💰 <b>KASSA TOZALANDI</b>", parse_mode="HTML")
+
+@dp.message(F.text.in_({"📊 Qarzdorlar ro'yxati", "📊 Қарздорлар рўйхати", "📊 Список должников"}))
+async def show_debts_list(message: types.Message):
+    if message.from_user.id not in ADMINS:
+        return
+    debts = load_json(DEBTS_FILE)
+    if not debts:
+        await message.answer("🎉 Hozircha qarzdorlar yo'q!")
+        return
+    
+    text = "📋 <b>QARZDORLAR RO'YXATI:</b>\n\n"
+    for idx, d in enumerate(debts, 1):
+        name = html.escape(str(d.get('full_name', 'Mijoz')))
+        phone = html.escape(str(d.get('phone', '')))
+        product = html.escape(str(d.get('product', '')))
+        date = html.escape(str(d.get('date', '')))
+        text += f"{idx}. <b>{name}</b> | 📞 {phone}\n📦 {product} | 📅 {date}\n\n"
+    
+    await message.answer(text, reply_markup=get_admin_debts_kb(debts), parse_mode="HTML")
+
+@dp.callback_query(F.data.startswith("payoff_"))
+async def process_payoff(call: types.CallbackQuery):
+    d_id = call.data.split("_")[1]
+    debts = load_json(DEBTS_FILE)
+    new_debts = [d for d in debts if str(d.get("id", d.get("user_id"))) != str(d_id)]
+    save_json(DEBTS_FILE, new_debts)
+    
+    kassa = load_json(KASSA_FILE)
+    if kassa.get("debt_orders", 0) > 0:
+        kassa["debt_orders"] -= 1
+        save_json(KASSA_FILE, kassa)
+        
+    await call.answer("✅ Qarz to'landi deb belgilandi!", show_alert=True)
+    await call.message.delete()
+
+@dp.callback_query(F.data.startswith("remind_"))
+async def process_admin_remind(call: types.CallbackQuery):
+    parts = call.data.split("_")
+    u_id, d_id = int(parts[1]), parts[2]
+    debts = load_json(DEBTS_FILE)
+    debt = next((d for d in debts if str(d.get("id", d.get("user_id"))) == str(d_id)), None)
+    
+    if debt:
+        try:
+            await bot.send_message(u_id, "🔔 <b>Qarzingizni to'lash muddati keldi / eslatma!</b>", parse_mode="HTML")
+            await call.answer("🔔 Eslatildi!", show_alert=True)
+        except Exception:
+            await call.answer("❌ Xabar yuborib bo'lmadi.", show_alert=True)
+    else:
+        await call.answer("⚠️ Topilmadi.", show_alert=True)
+
+async def main():
+    asyncio.create_task(auto_debt_reminder_task())
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(main())

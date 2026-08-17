@@ -1,0 +1,6 @@
+{
+    "total_orders": 0,
+    "cash_orders": 0,
+    "debt_orders": 0,
+    "total_sum": 0
+}
